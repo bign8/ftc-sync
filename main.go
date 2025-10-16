@@ -35,13 +35,31 @@ var cmds = map[string]func([]string) error{
 	"tree":  tree,
 }
 
-var remoteDirectory = flag.String("remote", "/org/firstinspires/ftc/teamcode/", "Directory on remote system")
+func envStr(envVar, blankValue string) string {
+	if val, ok := os.LookupEnv(envVar); ok {
+		return val
+	}
+	return blankValue
+}
+
+var (
+	remoteDirectory = flag.String(
+		"remote",
+		envStr("FTC_REMOTE_DIRECTORY", "/org/firstinspires/ftc/teamcode/"),
+		"Directory on remote system (FTC_REMOTE_DIRECTORY)",
+	)
+	remoteAddress = flag.String(
+		"address",
+		envStr("FTC_ROBOT_ADDRESS", "192.168.49.1:8080"),
+		"Host:Port of the robot to connect to (FTC_ROBOT_ADDRESS)",
+	)
+)
 
 func ping([]string) error {
 	// is the robot available (repeats every second to ensure we stay in "connected devices list")
 	// TODO: timeout at 1 second
 	fmt.Fprintln(flag.CommandLine.Output(), "Pinging...")
-	res, err := client.PostForm("http://192.168.49.1:8080/ping", url.Values{
+	res, err := client.PostForm("http://"+*remoteAddress+"/ping", url.Values{
 		"name": []string{"ftc-sync/ping"},
 	})
 	if err != nil {
@@ -72,7 +90,7 @@ func repl([]string) error {
 
 func all([]string) error {
 	fmt.Fprintln(flag.CommandLine.Output(), "Reading Files...")
-	res, err := client.Get("http://192.168.49.1:8080/java/file/all")
+	res, err := client.Get("http://" + *remoteAddress + "/java/file/all")
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
@@ -120,7 +138,7 @@ func all([]string) error {
 
 func tree([]string) error {
 	slog.Debug("Fetching tree...")
-	res, err := client.Get("http://192.168.49.1:8080/java/file/tree")
+	res, err := client.Get("http://" + *remoteAddress + "/java/file/tree")
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
@@ -169,7 +187,7 @@ func pull(args []string) error {
 	file := args[0]
 	slog.Debug("fetching file", slog.String("file", file))
 
-	res, err := client.Get("http://192.168.49.1:8080/java/file/get?f=/src" + *remoteDirectory + file)
+	res, err := client.Get("http://" + *remoteAddress + "/java/file/get?f=/src" + *remoteDirectory + file)
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
@@ -214,7 +232,7 @@ func push(args []string) error {
 		return fmt.Errorf("read all: %w", err)
 	}
 
-	res, err := client.PostForm("http://192.168.49.1:8080/java/file/get?f=/src"+*remoteDirectory+remoteFile, url.Values{
+	res, err := client.PostForm("http://"+*remoteAddress+"/java/file/get?f=/src"+*remoteDirectory+remoteFile, url.Values{
 		"data": {string(contents)},
 	})
 	if err != nil {

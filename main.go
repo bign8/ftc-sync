@@ -56,23 +56,26 @@ var (
 		envStr("FTC_ROBOT_ADDRESS", "192.168.49.1:8080"),
 		"Host:Port of the robot to connect to (FTC_ROBOT_ADDRESS)",
 	)
+	debug = flag.Bool(
+		"debug",
+		false,
+		"Print first N bytes of HTTP responses",
+	)
 )
 
 func ping([]string) error {
 	// is the robot available (repeats every second to ensure we stay in "connected devices list")
-	// TODO: timeout at 1 second
-	fmt.Fprintln(flag.CommandLine.Output(), "Pinging...")
+	fmt.Fprint(flag.CommandLine.Output(), "Pinging ... ")
+	os.Stderr.Sync()
 	res, err := client.PostForm("http://"+*remoteAddress+"/ping", url.Values{
 		"name": []string{"ftc-sync/ping"},
 	})
 	if err != nil {
 		return fmt.Errorf("POST: %w", err)
 	}
-	bits, err := httputil.DumpResponse(res, true)
-	if err != nil {
-		return fmt.Errorf("DUMP: %w", err)
-	}
-	fmt.Fprintln(flag.CommandLine.Output(), string(bits))
+	debugResponse(res)
+	// TODO: decode the json response here
+	fmt.Fprintln(flag.CommandLine.Output(), "DONE")
 	return nil
 }
 
@@ -80,7 +83,10 @@ func ping2(args []string) error {
 	if err := ping(args); err != nil {
 		return err
 	}
+	fmt.Fprint(flag.CommandLine.Output(), "Sleeping ... ")
+	os.Stderr.Sync()
 	time.Sleep(3 * time.Second)
+	fmt.Fprintln(flag.CommandLine.Output(), "DONE")
 	if err := ping(args); err != nil {
 		return err
 	}
@@ -119,7 +125,6 @@ func newFile(args []string) error {
 		return fmt.Errorf("POST: %w", err)
 	}
 	defer res.Body.Close()
-
 	debugResponse(res)
 
 	if res.StatusCode != http.StatusOK {
@@ -173,6 +178,7 @@ func deleteFile(args []string) error {
 	if err != nil {
 		return fmt.Errorf("POST: %w", err)
 	}
+	defer res.Body.Close()
 	debugResponse(res)
 
 	// {"success": "true"}
@@ -185,6 +191,7 @@ func templates([]string) error {
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
+	defer res.Body.Close()
 	debugResponse(res)
 
 	var templateList []struct {
@@ -232,12 +239,8 @@ func all([]string) error {
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
-
-	// bits, err := httputil.DumpResponse(res, true)
-	// if err != nil {
-	// 	return fmt.Errorf("DUMP: %w", err)
-	// }
-	// fmt.Fprintln(flag.CommandLine.Output(), string(bits[:300]))
+	defer res.Body.Close()
+	debugResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status: %s", res.Status)
@@ -280,12 +283,8 @@ func tree([]string) error {
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
-
-	// bits, err := httputil.DumpResponse(res, true)
-	// if err != nil {
-	// 	return fmt.Errorf("DUMP: %w", err)
-	// }
-	// fmt.Fprintln(flag.CommandLine.Output(), string(bits[:300]))
+	defer res.Body.Close()
+	debugResponse(res)
 
 	var myTree struct {
 		Sources []string `json:"src"`
@@ -329,12 +328,9 @@ func pull(args []string) error {
 	if err != nil {
 		return fmt.Errorf("GET: %w", err)
 	}
+	defer res.Body.Close()
+	debugResponse(res)
 
-	// bits, err := httputil.DumpResponse(res, true)
-	// if err != nil {
-	// 	return fmt.Errorf("DUMP: %w", err)
-	// }
-	// fmt.Fprintln(flag.CommandLine.Output(), string(bits[:300]))
 	bits, err := io.ReadAll(res.Body)
 	if err != nil {
 		return fmt.Errorf("ReadAll: %w", err)
@@ -376,17 +372,16 @@ func push(args []string) error {
 	if err != nil {
 		return fmt.Errorf("post: %w", err)
 	}
-
-	bits, err := httputil.DumpResponse(res, true)
-	if err != nil {
-		return fmt.Errorf("DUMP: %w", err)
-	}
-	fmt.Fprintln(flag.CommandLine.Output(), string(bits))
+	defer res.Body.Close()
+	debugResponse(res)
 
 	return nil
 }
 
 func debugResponse(res *http.Response) {
+	if !*debug {
+		return
+	}
 	bits, err := httputil.DumpResponse(res, true)
 	if err != nil {
 		panic(err)

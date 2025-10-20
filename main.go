@@ -26,13 +26,16 @@ var client = &http.Client{
 }
 
 var cmds = map[string]func([]string) error{
-	"ping":  ping,
-	"ping2": ping2,
-	"pull":  pull,
-	"push":  push,
-	"repl":  repl,
-	"all":   all,
-	"tree":  tree,
+	"ping":      ping,
+	"ping2":     ping2,
+	"pull":      pull,
+	"push":      push,
+	"repl":      repl,
+	"all":       all,
+	"tree":      tree,
+	"new":       newFile,
+	"delete":    deleteFile,
+	"templates": templates,
 }
 
 func envStr(envVar, blankValue string) string {
@@ -85,7 +88,124 @@ func ping2(args []string) error {
 }
 
 func repl([]string) error {
+	// TODO: need to mentally figure out what I want to do here
 	return fmt.Errorf(`repl: %w`, errors.ErrUnsupported)
+}
+
+// TODO: figure out reasonable arguments to take here
+func newFile([]string) error {
+	vals := url.Values{
+		"f": []string{"/src" + *remoteDirectory + "MyRobotTeleopMecanumFieldRelativeDrive.java"},
+	}
+	form := url.Values{
+		"new":               []string{"1"},
+		"template":          []string{"templates/RobotTeleopMecanumFieldRelativeDrive"},
+		"opModeAnnotations": []string{"@TeleOp\n"}, // probably don't need the newline
+		"teamName":          []string{},            // ???
+	}
+
+	res, err := client.PostForm("http://"+*remoteAddress+"/java/file/new?"+vals.Encode(), form)
+	if err != nil {
+		return fmt.Errorf("POST: %w", err)
+	}
+	defer res.Body.Close()
+
+	debugResponse(res)
+
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad response code: %d != 200", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("unable to read body: %w", err)
+	}
+	if err := res.Body.Close(); err != nil {
+		return fmt.Errorf("unable to close body: %w", err)
+	}
+
+	sbody := string(body)
+	if sbody != vals["f"][0] {
+		return fmt.Errorf("unexpected created file: %q != %q", sbody, vals["f"][0])
+	}
+
+	sbody = strings.Replace(sbody, "/src"+*remoteDirectory, "", 1)
+	fmt.Fprintln(flag.CommandLine.Output(), sbody)
+
+	return nil
+}
+
+// TODO: accept name as positional argument
+func deleteFile([]string) error {
+	// delete form value is a JSON encoded array of strings
+	// yes, I tested if this'll work without the json encoding... it doesn't
+
+	files := []string{"src" + *remoteDirectory + "MyRobotTeleopMecanumFieldRelativeDrive.java"}
+
+	toDelete, err := json.Marshal(files)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	form := url.Values{
+		"delete": []string{string(toDelete)},
+	}
+
+	res, err := client.PostForm("http://"+*remoteAddress+"/java/file/delete", form)
+	if err != nil {
+		return fmt.Errorf("POST: %w", err)
+	}
+	debugResponse(res)
+
+	// {"success": "true"}
+
+	return nil
+}
+
+func templates([]string) error {
+	res, err := client.Get("http://" + *remoteAddress + "/java/file/templates")
+	if err != nil {
+		return fmt.Errorf("GET: %w", err)
+	}
+	debugResponse(res)
+
+	var templateList []struct {
+		ExampleProject bool   `json:"exampleProject"`
+		Name           string `json:"name"`
+		Disabled       bool   `json:"disabled"`
+		Autonomous     bool   `json:"autonomous"`
+		Teleop         bool   `json:"teleop"`
+		Example        bool   `json:"example"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&templateList); err != nil {
+		return fmt.Errorf("json.decode: %w", err)
+	}
+
+	var buff [5]byte
+
+	addBit := func(bit bool, off int) {
+		if bit {
+			buff[off] = '1'
+		} else {
+			buff[off] = '0'
+		}
+	}
+
+	fmt.Fprintln(flag.CommandLine.Output(), "exampleProject,disabled,autonomous,teleop,example\tname")
+	for _, item := range templateList {
+		addBit(item.ExampleProject, 0)
+		addBit(item.Disabled, 1)
+		addBit(item.Autonomous, 2)
+		addBit(item.Teleop, 3)
+		addBit(item.Example, 4)
+
+		fmt.Fprintln(
+			flag.CommandLine.Output(),
+			string(buff[:])+"\t"+item.Name,
+		)
+	}
+	return nil
 }
 
 func all([]string) error {
@@ -246,6 +366,20 @@ func push(args []string) error {
 	fmt.Fprintln(flag.CommandLine.Output(), string(bits))
 
 	return nil
+}
+
+func debugResponse(res *http.Response) {
+	bits, err := httputil.DumpResponse(res, true)
+	if err != nil {
+		panic(err)
+	}
+	// warning: unicode unsafe byte slicing
+	if len(bits) > 300 {
+		bits = bits[:300]
+	}
+	fmt.Fprintln(flag.CommandLine.Output(), "-------------------------------")
+	fmt.Fprintln(flag.CommandLine.Output(), string(bits))
+	fmt.Fprintln(flag.CommandLine.Output(), "-------------------------------")
 }
 
 func usage() {

@@ -92,14 +92,24 @@ func repl([]string) error {
 	return fmt.Errorf(`repl: %w`, errors.ErrUnsupported)
 }
 
-// TODO: figure out reasonable arguments to take here
-func newFile([]string) error {
+// <template-name> [<optional-file-name>]
+func newFile(args []string) error {
+	if len(args) != 1 && len(args) != 2 {
+		return fmt.Errorf("invalid number of args: %d != (1,2)", len(args))
+	}
+
+	template := args[0]
+	filename := template + ".java"
+	if len(args) == 2 {
+		filename = args[1]
+	}
+
 	vals := url.Values{
-		"f": []string{"/src" + *remoteDirectory + "MyRobotTeleopMecanumFieldRelativeDrive.java"},
+		"f": []string{"/src" + *remoteDirectory + filename},
 	}
 	form := url.Values{
 		"new":               []string{"1"},
-		"template":          []string{"templates/RobotTeleopMecanumFieldRelativeDrive"},
+		"template":          []string{"templates/" + template},
 		"opModeAnnotations": []string{"@TeleOp\n"}, // probably don't need the newline
 		"teamName":          []string{},            // ???
 	}
@@ -135,12 +145,20 @@ func newFile([]string) error {
 	return nil
 }
 
-// TODO: accept name as positional argument
-func deleteFile([]string) error {
-	// delete form value is a JSON encoded array of strings
+// <file-name>
+func deleteFile(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("invalid number of args: %d != 1", len(args))
+	}
+
+	name := args[0]
+
+	// sanity check, should we check if the name is in the file listing?
+
+	// `delete` form value is a JSON encoded array of strings
 	// yes, I tested if this'll work without the json encoding... it doesn't
 
-	files := []string{"src" + *remoteDirectory + "MyRobotTeleopMecanumFieldRelativeDrive.java"}
+	files := []string{"src" + *remoteDirectory + name}
 
 	toDelete, err := json.Marshal(files)
 	if err != nil {

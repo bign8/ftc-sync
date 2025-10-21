@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/term"
 )
 
 type onBotJavaEvent struct {
@@ -15,7 +18,6 @@ type onBotJavaEvent struct {
 }
 
 func repl([]string) error {
-
 	// WARNING: this is on a separate PORT than the main HTTP server
 	websocketURL := "ws://192.168.49.1:8081"
 
@@ -39,6 +41,20 @@ func repl([]string) error {
 
 	fmt.Println("Connected! Subscribed to ONBOTJAVA events.")
 
+	// Set up terminal in raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to set terminal to raw mode: %w", err)
+	}
+	defer func() {
+		term.Restore(int(os.Stdin.Fd()), oldState)
+		fmt.Println() // Add newline when exiting
+	}()
+
+	// Terminal control variables
+	inputBuffer := ""
+	prompt := "ftc> "
+
 	// Start goroutine to listen for websocket events
 	eventChan := make(chan string, 10)
 	go func() {
@@ -60,79 +76,148 @@ func repl([]string) error {
 		}
 	}()
 
-	// TODO: get full control of the user's terminal to avoid input clashed
+	// Helper function to clear current line and rewrite it
+	clearLine := func() {
+		fmt.Print("\r\033[K") // Move to beginning of line and clear it
+	}
+
+	redrawPrompt := func() {
+		fmt.Print(prompt + inputBuffer)
+	}
+
+	// Helper function to handle events
+	handleEvent := func(event string) {
+		clearLine()
+		fmt.Printf("🔔 %s\r\n", event)
+		redrawPrompt()
+	}
+
+	fmt.Print("Type 'build' to trigger a build, 'exit' or 'quit' to leave the REPL.\r\n")
+	fmt.Print(prompt)
+
+	// Create a channel for stdin input to make it non-blocking
+	stdinChan := make(chan byte, 1)
 	go func() {
-		for event := range eventChan {
-			fmt.Printf("🔔 %s\n", event)
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				return
+			}
+			stdinChan <- buf[0]
 		}
 	}()
 
-	fmt.Println("Type 'build' to trigger a build, 'exit' or 'quit' to leave the REPL.")
-
-	// Main REPL loop
+	// Main input loop with proper event handling
 	for {
+		select {
+		case event := <-eventChan:
+			handleEvent(event)
 
-		fmt.Print("ftc> ")
-		os.Stdout.Sync()
-		os.Stderr.Sync()
+		case char := <-stdinChan:
+			switch char {
+			case '\r', '\n': // Enter key
+				fmt.Print("\r\n") // Proper newline in raw mode (carriage return + line feed)
 
-		var input string
-		_, err := fmt.Scan(&input)
-		if err != nil {
-			return fmt.Errorf("scanln: %w", err)
-		}
+				command := strings.TrimSpace(inputBuffer)
+				inputBuffer = ""
 
-		switch input {
-		case "exit", "quit":
-			fmt.Println("Goodbye!")
-			return nil
+				if command == "" {
+					fmt.Print(prompt)
+					continue
+				}
 
-		case "build":
-			fmt.Println("🔨 Triggering build...")
+				err := handleCommand(conn, command)
+				if err == io.EOF {
+					return nil // Exit requested
+				}
+				if err != nil {
+					fmt.Printf("Error: %v\r\n", err)
+				}
 
-			// Send build request via websocket
-			err = conn.WriteJSON(onBotJavaEvent{
-				Namespace: "ONBOTJAVA",
-				Type:      "build:launch",
-				Payload:   "",
-			})
-			if err != nil {
-				fmt.Printf("❌ Error sending build command: %v\n", err)
-			} else {
-				fmt.Println("✅ Build command sent! Waiting for events...")
+				fmt.Print(prompt)
+
+			case 127, 8: // Backspace/Delete
+				if len(inputBuffer) > 0 {
+					inputBuffer = inputBuffer[:len(inputBuffer)-1]
+					clearLine()
+					redrawPrompt()
+				}
+
+			case 3: // Ctrl+C
+				fmt.Println()
+				return nil
+
+			default:
+				// Regular character
+				if char >= 32 && char < 127 { // Printable ASCII
+					inputBuffer += string(char)
+					fmt.Print(string(char))
+				}
 			}
 
-			// Wait for events
-			// TODO: spinner for long builds
-			res, err := client.Get("http://" + *remoteAddress + "/java/build/wait")
-			if err != nil {
-				fmt.Printf("❌ Error waiting for build events: %v\n", err)
-				continue
-			}
-			defer res.Body.Close()
-			debugResponse(res)
-
-			bits, err := io.ReadAll(res.Body)
-			if err != nil {
-				fmt.Printf("❌ Error reading build events: %v\n", err)
-				continue
-			}
-
-			if len(bits) == 0 {
-				fmt.Println("✅ Build succeeded with no output.")
-				continue
-			}
-			fmt.Printf("📦 Build result:\n%s", string(bits))
-
-		case "help":
-			fmt.Println("Available commands:")
-			fmt.Println("  build - Trigger a build")
-			fmt.Println("  help  - Show this help")
-			fmt.Println("  exit  - Exit the REPL")
-			fmt.Println("  quit  - Exit the REPL")
-
-		default:
-			fmt.Printf("Unknown command: %s (type 'help' for available commands)\n", input)
+		case <-time.After(50 * time.Millisecond):
+			// Small timeout to prevent busy waiting
+			continue
 		}
 	}
+}
+
+// handleCommand processes user commands and returns io.EOF for exit
+func handleCommand(conn *websocket.Conn, command string) error {
+	switch command {
+	case "exit", "quit":
+		fmt.Print("Goodbye!")
+		return io.EOF
+
+	case "build":
+		fmt.Print("🔨 Triggering build...\r\n")
+
+		// Send build request via websocket
+		err := conn.WriteJSON(onBotJavaEvent{
+			Namespace: "ONBOTJAVA",
+			Type:      "build:launch",
+			Payload:   "",
+		})
+		if err != nil {
+			fmt.Printf("❌ Error sending build command: %v\r\n", err)
+			return nil
+		}
+
+		fmt.Print("✅ Build command sent! Waiting for events...\r\n")
+
+		// Wait for events
+		// TODO: spinner for long builds
+		res, err := client.Get("http://" + *remoteAddress + "/java/build/wait")
+		if err != nil {
+			fmt.Printf("❌ Error waiting for build events: %v\r\n", err)
+			return nil
+		}
+		defer res.Body.Close()
+		debugResponse(res)
+
+		bits, err := io.ReadAll(res.Body)
+		if err != nil {
+			fmt.Printf("❌ Error reading build events: %v\r\n", err)
+			return nil
+		}
+
+		if len(bits) == 0 {
+			fmt.Print("✅ Build succeeded with no output.\r\n")
+		} else {
+			fmt.Printf("📦 Build result:\r\n%s", string(bits))
+		}
+
+	case "help":
+		fmt.Println("Available commands:\r")
+		fmt.Println("  build - Trigger a build\r")
+		fmt.Println("  help  - Show this help\r")
+		fmt.Println("  exit  - Exit the REPL\r")
+		fmt.Println("  quit  - Exit the REPL\r")
+
+	default:
+		fmt.Printf("Unknown command: %s (type 'help' for available commands)\r\n", command)
+	}
+
+	return nil
 }

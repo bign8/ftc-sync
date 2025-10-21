@@ -70,7 +70,7 @@ func repl([]string) error {
 			if namespace, ok := message["namespace"].(string); ok && namespace == "ONBOTJAVA" {
 				if msgType, ok := message["type"].(string); ok {
 					payload := message["payload"]
-					eventChan <- fmt.Sprintf("[%s] %s: %v", namespace, msgType, payload)
+					eventChan <- fmt.Sprintf("🔔 [%s] %s: %v", namespace, msgType, payload)
 				}
 			}
 		}
@@ -88,7 +88,7 @@ func repl([]string) error {
 	// Helper function to handle events
 	handleEvent := func(event string) {
 		clearLine()
-		fmt.Printf("🔔 %s\r\n", event)
+		fmt.Printf("%s\r\n", event)
 		redrawPrompt()
 	}
 
@@ -127,7 +127,7 @@ func repl([]string) error {
 					continue
 				}
 
-				err := handleCommand(conn, command)
+				err := handleCommand(conn, command, eventChan)
 				if err == io.EOF {
 					return nil // Exit requested
 				}
@@ -164,7 +164,7 @@ func repl([]string) error {
 }
 
 // handleCommand processes user commands and returns io.EOF for exit
-func handleCommand(conn *websocket.Conn, command string) error {
+func handleCommand(conn *websocket.Conn, command string, eventChan chan<- string) error {
 	switch command {
 	case "exit", "quit":
 		fmt.Print("Goodbye!")
@@ -187,26 +187,7 @@ func handleCommand(conn *websocket.Conn, command string) error {
 		fmt.Print("✅ Build command sent! Waiting for events...\r\n")
 
 		// Wait for events
-		// TODO: spinner for long builds
-		res, err := client.Get("http://" + *remoteAddress + "/java/build/wait")
-		if err != nil {
-			fmt.Printf("❌ Error waiting for build events: %v\r\n", err)
-			return nil
-		}
-		defer res.Body.Close()
-		debugResponse(res)
-
-		bits, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Printf("❌ Error reading build events: %v\r\n", err)
-			return nil
-		}
-
-		if len(bits) == 0 {
-			fmt.Print("✅ Build succeeded with no output.\r\n")
-		} else {
-			fmt.Printf("📦 Build result:\r\n%s", string(bits))
-		}
+		go watchBuild(eventChan)
 
 	case "help":
 		fmt.Println("Available commands:\r")
@@ -220,4 +201,25 @@ func handleCommand(conn *websocket.Conn, command string) error {
 	}
 
 	return nil
+}
+
+func watchBuild(eventChan chan<- string) {
+	res, err := client.Get("http://" + *remoteAddress + "/java/build/wait")
+	if err != nil {
+		eventChan <- fmt.Sprintf("❌ Error waiting for build events: %v", err)
+		return
+	}
+	defer res.Body.Close()
+
+	bits, err := io.ReadAll(res.Body)
+	if err != nil {
+		eventChan <- fmt.Sprintf("❌ Error reading build events: %v", err)
+		return
+	}
+
+	if len(bits) == 0 {
+		eventChan <- "✅ Build succeeded with no output."
+	} else {
+		eventChan <- fmt.Sprintf("📦 Build result:\r\n%s", string(bits))
+	}
 }

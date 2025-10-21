@@ -8,6 +8,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type onBotJavaEvent struct {
+	Namespace string `json:"namespace"`
+	Type      string `json:"type"`
+	Payload   string `json:"payload"`
+}
+
 func repl([]string) error {
 
 	// WARNING: this is on a separate PORT than the main HTTP server
@@ -22,11 +28,7 @@ func repl([]string) error {
 	defer conn.Close()
 
 	// Subscribe to ONBOTJAVA events
-	err = conn.WriteJSON(struct {
-		Namespace string `json:"namespace"`
-		Type      string `json:"type"`
-		Payload   string `json:"payload"`
-	}{
+	err = conn.WriteJSON(onBotJavaEvent{
 		Namespace: "system",
 		Type:      "subscribeToNamespace",
 		Payload:   "ONBOTJAVA",
@@ -61,7 +63,7 @@ func repl([]string) error {
 	// TODO: get full control of the user's terminal to avoid input clashed
 	go func() {
 		for event := range eventChan {
-			fmt.Printf("\n🔔 %s\n", event)
+			fmt.Printf("🔔 %s\n", event)
 		}
 	}()
 
@@ -89,11 +91,7 @@ func repl([]string) error {
 			fmt.Println("🔨 Triggering build...")
 
 			// Send build request via websocket
-			err = conn.WriteJSON(struct {
-				Namespace string `json:"namespace"`
-				Type      string `json:"type"`
-				Payload   string `json:"payload"`
-			}{
+			err = conn.WriteJSON(onBotJavaEvent{
 				Namespace: "ONBOTJAVA",
 				Type:      "build:launch",
 				Payload:   "",
@@ -120,7 +118,11 @@ func repl([]string) error {
 				continue
 			}
 
-			fmt.Printf("📦 Build result:\n%s\n", string(bits))
+			if len(bits) == 0 {
+				fmt.Println("✅ Build succeeded with no output.")
+				continue
+			}
+			fmt.Printf("📦 Build result:\n%s", string(bits))
 
 		case "help":
 			fmt.Println("Available commands:")

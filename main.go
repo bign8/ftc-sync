@@ -4,7 +4,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -91,11 +90,6 @@ func ping2(args []string) error {
 		return err
 	}
 	return nil
-}
-
-func repl([]string) error {
-	// TODO: need to mentally figure out what I want to do here
-	return fmt.Errorf(`repl: %w`, errors.ErrUnsupported)
 }
 
 // <template-name> [<optional-file-name>]
